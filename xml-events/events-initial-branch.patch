@@ -1,0 +1,269 @@
+From 166fe8f9d1ef882f1829a7a2dad2ac113ce23418 Mon Sep 17 00:00:00 2001
+From: asvn <39301116+5z3f@users.noreply.github.com>
+Date: Thu, 20 Jun 2024 23:47:09 +0200
+Subject: [PATCH] events implementation on initial source branch
+
+---
+ Engine/Interface/UIBase.cpp |  19 ++++
+ Engine/Interface/UIBase.h   |   6 +-
+ Engine/Interface/ui_event.h | 174 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 198 insertions(+), 1 deletion(-)
+ create mode 100644 Engine/Interface/ui_event.h
+
+diff --git a/Engine/Interface/UIBase.cpp b/Engine/Interface/UIBase.cpp
+index cf9d961..744ed61 100644
+--- a/Engine/Interface/UIBase.cpp
++++ b/Engine/Interface/UIBase.cpp
+@@ -867,11 +867,22 @@ WMSG_RESULT CUIBase::MouseMove(UINT16 x, UINT16 y, MSG* pMsg)
+     {
+         if (m_bEnter == false)
+             OnEnter(x, y);
++            auto now = std::chrono::high_resolution_clock::now();
++            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
++
++            trigger(ui_event::mouse_enter, ui_event_args::mouse_enter{ x, y, timestamp });
++        }
++
++        trigger(ui_event::mouse_move, ui_event_args::mouse_move{ x, y });
+     }
+     else
+     {
+         if (m_bEnter == true)
+             OnLeave(x, y);
++
++            auto now = std::chrono::high_resolution_clock::now();
++            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
++            trigger(ui_event::mouse_leave, ui_event_args::mouse_leave{ x, y, timestamp });
+     }
+ 
+     WMSG_RESULT ret = WMSG_FAIL;
+@@ -1216,6 +1227,10 @@ WMSG_RESULT CUIBase::OnLButtonUp( UINT16 x, UINT16 y )
+ 	if (IsInside(x, y) == FALSE)
+ 		return WMSG_OB;
+ 
++    auto now = std::chrono::high_resolution_clock::now();
++    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
++    trigger(ui_event::left_click, ui_event_args::click{ x, y, timestamp });
++
+ 	if (m_pCmdUp)
+ 		m_pCmdUp->execute();
+ 
+@@ -1267,6 +1282,10 @@ WMSG_RESULT CUIBase::OnRButtonUp( UINT16 x, UINT16 y )
+ 	if (IsInside(x, y) == FALSE)
+ 		return WMSG_OB;
+ 
++    auto now = std::chrono::high_resolution_clock::now();
++    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
++    trigger(ui_event::right_click, ui_event_args::click{ x, y, timestamp });
++
+ 	if (m_pCmdRUp)
+ 		m_pCmdRUp->execute();
+ 
+diff --git a/Engine/Interface/UIBase.h b/Engine/Interface/UIBase.h
+index b885f79..c10e2f6 100644
+--- a/Engine/Interface/UIBase.h
++++ b/Engine/Interface/UIBase.h
+@@ -8,6 +8,8 @@
+ #include <Engine/Base/Command.h>
+ #include <Engine/Util.h>
+ 
++#include "ui_event.h"
++
+ class CDrawPort;
+ 
+ struct stTooltipInfo
+@@ -24,7 +26,9 @@ struct stTooltipInfo
+ 	eALIGN_H	align_h;
+ };
+ 
+-class ENGINE_API CUIBase 
++
++
++class ENGINE_API CUIBase : public ui_event
+ {
+ public:
+ 	// List or Array에서 상태에 따라 차일드 상태 변경을 위해 추가.
+diff --git a/Engine/Interface/ui_event.h b/Engine/Interface/ui_event.h
+new file mode 100644
+index 0000000..4a3a129
+--- /dev/null
++++ b/Engine/Interface/ui_event.h
+@@ -0,0 +1,174 @@
++#pragma once
++
++#include <functional>
++#include <string>
++#include <vector>
++#include <unordered_map>
++
++namespace ui_event_args {
++    /**
++     * @struct base
++     * @brief Base struct for UI event arguments.
++     *
++     * This struct provides basic properties for UI event arguments.
++     */
++    struct base {
++        int x;
++        int y;
++    };
++
++    /**
++     * @struct base_with_timestamp
++     * @brief Base struct for UI event arguments with a timestamp.
++     *
++     * This struct inherits from base and adds a timestamp.
++     */
++    struct base_with_timestamp : public base {
++        long long timestamp;
++    };
++
++    /**
++     * @struct mouse_enter
++     * @brief Struct for mouse enter event arguments.
++     *
++     * This struct inherits from base_with_timestamp.
++     */
++    struct mouse_enter : public base_with_timestamp { };
++
++    /**
++     * @struct mouse_move
++     * @brief Struct for mouse move event arguments.
++     *
++     * This struct inherits from base.
++     */
++    struct mouse_move : public base { };
++
++    /**
++     * @struct mouse_leave
++     * @brief Struct for mouse leave event arguments.
++     *
++     * This struct inherits from base_with_timestamp.
++     */
++    struct mouse_leave : public base_with_timestamp { };
++
++    /**
++     * @struct click
++     * @brief Struct for click event arguments.
++     *
++     * This struct inherits from base_with_timestamp.
++     */
++    struct click : public base_with_timestamp { };
++};
++
++class ui_event {
++public:
++    using event_id = std::size_t;
++
++    enum ui_event_type {
++        mouse_enter,
++        mouse_move,
++        mouse_leave,
++        left_click,
++        right_click,
++    };
++
++    /**
++     * @typedef event_callback
++     * @brief A type representing a callback function for an event.
++     */
++    using event_callback = std::function<void(const ui_event_args::base&)>;
++
++    /**
++     * @brief Get the event count of a specific type.
++     * @param type The type of event.
++     * @return The event count of the specified type.
++     */
++    int get_event_count(ui_event_type type) {
++        return static_cast<int>(handlers[type].size());
++    }
++
++    /**
++     * @brief Get the total count of all types of events.
++     * @return The total event count.
++     */
++    int get_event_count() {
++        int count = 0;
++
++        for (const auto& pair : handlers)
++            count += static_cast<int>(pair.second.size());
++        
++        return count;
++    }
++
++    /**
++     * @brief Check if a specific type of event exists.
++     * @param type The type of event.
++     */
++    bool event_exists(ui_event_type type) {
++        return !handlers[type].empty();
++    }
++
++    /**
++     * @brief Register a callback for a specific type of event.
++     * @param type The type of event.
++     * @param callback The callback function to be registered.
++     * @return The ID of the registered event.
++     */
++    event_id on(ui_event_type type, event_callback callback) {
++        event_id id = next_id++;
++        handlers[type].push_back({ id, callback });
++        return id;
++    }
++
++    /**
++     * @brief Trigger a specific type of event.
++     * @tparam EventArgs The type of event arguments.
++     * @param type The type of event.
++     * @param args The event arguments.
++     */
++    template<typename EventArgs>
++    void trigger(ui_event_type type, const EventArgs& args) {
++        for (auto& pair : handlers[type]) {
++            pair.second(args);
++        }
++    }
++
++    /**
++     * @brief Remove a specific event by its ID.
++     * @param id The ID of the event to be removed.
++     * @return bool indicating whether the event was successfully removed.
++     */
++    bool remove_event(event_id id) {
++        bool removed = false;
++
++        for (auto& pair : handlers) {
++            auto& callbacks = pair.second;
++
++            auto it = std::remove_if(
++                callbacks.begin(),
++                callbacks.end(),
++                [id](const auto& pair) {
++                    return pair.first == id;
++                }
++            );
++
++            if (it != callbacks.end()) {
++                callbacks.erase(it, callbacks.end());
++                removed = true;
++            }
++        }
++
++        return removed;
++    }
++
++    /**
++     * @brief Remove all events.
++     */
++    void remove_events() {
++        handlers.clear();
++    }
++
++private:
++    event_id next_id = 0;
++    std::unordered_map<ui_event_type, std::vector<std::pair<event_id, event_callback>>> handlers;
++};
+\ No newline at end of file
+-- 
+2.36.0.windows.1
+
