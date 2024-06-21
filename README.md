@@ -8,11 +8,11 @@ The repository is organized into several directories, each representing a distin
 /root
   /patch1
     README.md
-    path1.path
+    some-patch1.patch
     additional files...
   /patch2
     README.md
-    path2.path
+    some-patch2.patch
     additional files...
   ...
 README.md
